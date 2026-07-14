@@ -5,3 +5,10 @@ numpy==2.5.1
 pandas==3.0.3
 scipy==1.18.0
 scikit-learn==1.9.0
+
+# Optional — only needed for scripts/train_gbdt.py (the LightGBM model).
+# The rest of the pipeline (Ridge / LogReg / SVR / blend) runs without it, and
+# train_gbdt.py self-skips if it is missing. On macOS LightGBM also needs the
+# OpenMP runtime: `brew install libomp`.
+lightgbm==4.6.0
+
