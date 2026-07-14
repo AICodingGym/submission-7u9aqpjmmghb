@@ -43,7 +43,9 @@ DATA_DIR = os.path.join(REPO_ROOT, "data")
 OUT_DIR = os.path.join(REPO_ROOT, "outputs")
 
 # model name -> (oof file, test file). Order = search/reporting order.
-MODELS = ["ridge", "logreg", "svr", "gbdt"]
+# gbdt_hf = LightGBM over [SVD(TF-IDF) + hand + HF embeddings]; included so the
+# weight search can use it if it helps (it is skipped automatically if absent).
+MODELS = ["ridge", "logreg", "svr", "gbdt", "gbdt_hf"]
 WEIGHT_STEP = 0.1          # simplex grid resolution for the weight search
 
 # placeholder-for-append
