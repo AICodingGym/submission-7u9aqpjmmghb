@@ -1,0 +1,7 @@
+# CPU-only baseline dependencies for Automated Essay Scoring 2.0.
+# Pinned to the versions the pipeline was developed and verified against.
+# Install: python -m venv .venv && .venv/bin/pip install -r requirements.txt
+numpy==2.5.1
+pandas==3.0.3
+scipy==1.18.0
+scikit-learn==1.9.0
