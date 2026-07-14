@@ -17,33 +17,42 @@ Artifacts written to outputs/:
 from __future__ import annotations
 
 import os
-import re
+import sys
 import time
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
-from scipy.optimize import minimize
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import Ridge
-from sklearn.metrics import cohen_kappa_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
+# make `src` importable regardless of the current working directory
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(HERE, "..", "data")
-OUT_DIR = os.path.join(HERE, "..", "outputs")
+REPO_ROOT = os.path.abspath(os.path.join(HERE, ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from src.features import extract_text_features, FEATURE_COLUMNS  # noqa: E402
+from src.thresholds import (  # noqa: E402
+    LABELS,
+    SCORE_MAX,
+    SCORE_MIN,
+    apply_thresholds,
+    optimize_thresholds,
+    quadratic_weighted_kappa as qwk,
+)
+
+DATA_DIR = os.path.join(REPO_ROOT, "data")
+OUT_DIR = os.path.join(REPO_ROOT, "outputs")
 
 SEED = 42
 N_FOLDS = 5
-LABELS = [1, 2, 3, 4, 5, 6]          # holistic score scale (fixed)
-SCORE_MIN, SCORE_MAX = 1, 6
 RIDGE_ALPHA = 1.0
 
 TEXT_COL_PRIORITY = ["full_text", "essay"]
 TARGET_COL_PRIORITY = ["score"]
-
-# placeholder markers filled in by later chunks
 
 
 # --------------------------------------------------------------------------- #
@@ -67,112 +76,6 @@ def detect_id_column(train: pd.DataFrame, test: pd.DataFrame, target: str) -> st
         if train[c].is_unique:
             return c
     raise KeyError(f"Could not find an id column among shared columns {shared}")
-
-
-# --------------------------------------------------------------------------- #
-# Hand-crafted text features (dense, cheap, CPU-friendly)
-# --------------------------------------------------------------------------- #
-_WORD_RE = re.compile(r"\b\w+\b")
-_SENT_SPLIT_RE = re.compile(r"[.!?]+")
-
-
-def hand_features(texts: pd.Series) -> np.ndarray:
-    """Structural / stylometric features. No fitting, so leakage-free by design."""
-    feats = []
-    for t in texts.astype(str):
-        n_chars = len(t)
-        words = _WORD_RE.findall(t)
-        n_words = len(words)
-        uniq_words = len(set(w.lower() for w in words))
-        sents = [s for s in _SENT_SPLIT_RE.split(t) if s.strip()]
-        n_sents = len(sents)
-        word_lens = [len(w) for w in words]
-        n_para = t.count("\n\n") + 1
-        n_commas = t.count(",")
-        n_exclaim = t.count("!")
-        n_question = t.count("?")
-        n_upper = sum(1 for ch in t if ch.isupper())
-        n_digits = sum(1 for ch in t if ch.isdigit())
-        feats.append([
-            n_chars,
-            n_words,
-            uniq_words,
-            uniq_words / (n_words + 1),            # lexical diversity
-            n_sents,
-            n_words / (n_sents + 1),               # avg words per sentence
-            float(np.mean(word_lens)) if word_lens else 0.0,
-            float(np.std(word_lens)) if word_lens else 0.0,
-            n_chars / (n_words + 1),               # avg chars per word
-            n_para,
-            n_commas / (n_sents + 1),
-            n_exclaim,
-            n_question,
-            n_upper / (n_chars + 1),
-            n_digits / (n_chars + 1),
-        ])
-    return np.asarray(feats, dtype=np.float64)
-
-
-HAND_FEATURE_NAMES = [
-    "n_chars", "n_words", "uniq_words", "lexical_diversity", "n_sents",
-    "avg_words_per_sent", "mean_word_len", "std_word_len", "avg_chars_per_word",
-    "n_para", "commas_per_sent", "n_exclaim", "n_question",
-    "upper_ratio", "digit_ratio",
-]
-
-
-# --------------------------------------------------------------------------- #
-# Metric + rounding
-# --------------------------------------------------------------------------- #
-def qwk(y_true, y_pred) -> float:
-    """Quadratic weighted kappa on the fixed 1..6 label set.
-
-    labels=LABELS is passed explicitly so the confusion matrix is always 6x6
-    even if some score never appears in y_pred — otherwise the (N-1)^2
-    normalization would use the wrong N and distort the score.
-    """
-    return cohen_kappa_score(
-        np.asarray(y_true, dtype=int),
-        np.asarray(y_pred, dtype=int),
-        weights="quadratic",
-        labels=LABELS,
-    )
-
-
-def apply_thresholds(x: np.ndarray, thresholds: np.ndarray) -> np.ndarray:
-    """Map continuous predictions to integer classes 1..6 via 5 cut points."""
-    # thresholds is sorted ascending, length = len(LABELS) - 1
-    return np.searchsorted(thresholds, x) + SCORE_MIN
-
-
-class OptimizedRounder:
-    """Optimize 5 rounding thresholds to maximize QWK on OOF predictions only.
-
-    Fit is called with the OOF vector and OOF truth; the learned cut points are
-    then applied unchanged to the test predictions. Test labels are never seen.
-    """
-
-    def __init__(self):
-        # initial guesses at the boundaries between adjacent scores
-        self.thresholds = np.array([1.5, 2.5, 3.5, 4.5, 5.5], dtype=np.float64)
-
-    def _neg_qwk(self, thresholds, x, y):
-        preds = apply_thresholds(x, np.sort(thresholds))
-        return -qwk(y, preds)
-
-    def fit(self, x: np.ndarray, y: np.ndarray) -> "OptimizedRounder":
-        res = minimize(
-            self._neg_qwk,
-            self.thresholds,
-            args=(x, y),
-            method="Nelder-Mead",
-            options={"maxiter": 2000, "xatol": 1e-4, "fatol": 1e-5},
-        )
-        self.thresholds = np.sort(res.x)
-        return self
-
-    def predict(self, x: np.ndarray) -> np.ndarray:
-        return apply_thresholds(x, self.thresholds)
 
 
 # --------------------------------------------------------------------------- #
@@ -254,13 +157,14 @@ def run():
     text_train = train[text_col].astype(str)
     text_test = test[text_col].astype(str)
 
-    # hand features computed once (no fitting -> no leakage); scaled per-fold
-    print(f"[feat] computing {len(HAND_FEATURE_NAMES)} hand-crafted features: "
-          f"{', '.join(HAND_FEATURE_NAMES)}")
-    hand_train = hand_features(text_train)
-    hand_test = hand_features(text_test)
-    assert hand_train.shape[1] == len(HAND_FEATURE_NAMES), \
-        f"hand feature count {hand_train.shape[1]} != names {len(HAND_FEATURE_NAMES)}"
+    # hand features computed once (no fitting -> no leakage); scaled per-fold.
+    # Uses the shared src.features implementation (28 dense features).
+    print(f"[feat] computing {len(FEATURE_COLUMNS)} hand-crafted features "
+          f"via src.features.extract_text_features")
+    hand_train = extract_text_features(text_train).to_numpy(dtype=np.float64)
+    hand_test = extract_text_features(text_test).to_numpy(dtype=np.float64)
+    assert hand_train.shape[1] == len(FEATURE_COLUMNS), \
+        f"hand feature count {hand_train.shape[1]} != names {len(FEATURE_COLUMNS)}"
 
     oof = np.zeros(len(train), dtype=np.float64)
     test_pred = np.zeros(len(test), dtype=np.float64)
@@ -303,16 +207,18 @@ def finalize(train, test, sample, id_col, target, y, oof, test_pred, t0):
     oof_round = np.clip(np.round(oof), SCORE_MIN, SCORE_MAX).astype(int)
     qwk_round = qwk(y, oof_round)
 
-    # thresholds optimized ON OOF ONLY, then frozen and applied to test
-    rounder = OptimizedRounder().fit(oof, y)
-    oof_opt = rounder.predict(oof)
+    # thresholds optimized ON OOF ONLY (src.thresholds has no `test` param),
+    # then frozen and applied unchanged to the test predictions.
+    result = optimize_thresholds(oof, y)
+    oof_opt = apply_thresholds(oof, result.thresholds)
     qwk_opt = qwk(y, oof_opt)
     print(f"[oof] QWK round+clip = {qwk_round:.4f}   "
           f"QWK optimized-thresholds = {qwk_opt:.4f}")
-    print(f"[oof] thresholds = {np.round(rounder.thresholds, 4).tolist()}")
+    print(f"[oof] thresholds = {np.round(result.thresholds, 4).tolist()}  "
+          f"(strictly increasing: {bool((np.diff(result.thresholds) > 0).all())})")
 
-    test_labels = rounder.predict(test_pred)
-    test_labels = np.clip(test_labels, SCORE_MIN, SCORE_MAX).astype(int)
+    # apply_thresholds already clips into [1, 6] and returns int
+    test_labels = apply_thresholds(test_pred, result.thresholds)
 
     # --- build submission with EXACT sample_submission columns/order --------- #
     sub = sample.copy()
