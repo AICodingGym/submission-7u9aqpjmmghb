@@ -12,3 +12,13 @@ scikit-learn==1.9.0
 # OpenMP runtime: `brew install libomp`.
 lightgbm==4.6.0
 
+# Optional — only needed for scripts/hf_embeddings.py (frozen MiniLM sentence
+# embeddings, CPU inference only, no fine-tuning). hf_embeddings.py and the
+# HF-dependent scripts (train_hf_ridge.py, train_gbdt_hf.py) self-skip if these
+# are absent. First run downloads sentence-transformers/all-MiniLM-L6-v2 into
+# the HF cache; on an offline box, pre-populate that cache (the scripts set
+# HF_HUB_OFFLINE=1 and read it directly).
+torch==2.13.0
+transformers==5.13.1
+
+

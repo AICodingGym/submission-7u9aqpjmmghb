@@ -9,6 +9,11 @@ Pipeline: StandardScaler -> Ridge, 5-fold StratifiedKFold on the score, OOF +
 test predictions saved as continuous scores for later blending. Thresholds are
 optimized on OOF only (via src.thresholds) purely to report an OOF QWK.
 
+NOTE: this is an exploratory model. Mean-pooled MiniLM embeddings drop the
+essay-length signal that dominates this task, so it scored only ~0.556 OOF QWK
+and is intentionally NOT part of the default blend (scripts/blend.py). Kept for
+reference; do not wire its outputs into the blend without re-checking they help.
+
 Artifacts:
   outputs/oof_hf_ridge.npy   (n_train,)
   outputs/test_hf_ridge.npy  (n_test,)
