@@ -62,9 +62,13 @@ THR_MAXITER = 400       # Nelder-Mead cap during search (final winner re-opt at 
 
 
 def discover(n_train, n_test):
+    exclude = {s for s in os.environ.get("EXCLUDE", "").split(",") if s}
     names, oof_l, test_l = [], [], []
     for op in sorted(glob.glob(os.path.join(OUT_DIR, "oof_*.npy"))):
         name = os.path.basename(op)[4:-4]
+        if name in exclude:
+            print(f"  [excl] {name}")
+            continue
         tp = os.path.join(OUT_DIR, f"test_{name}.npy")
         if not os.path.exists(tp):
             continue
